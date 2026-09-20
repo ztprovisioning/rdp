@@ -14,20 +14,46 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Konfigurasi Service RDP Windows
+      - name: Konfigurasi Service RDP & Registry Anti-Disconnect
         shell: powershell
         run: |
-          # Buka port firewall dan matikan NLA agar login tidak dibajak domain lokal laptop
+          # 1. Buka akses RDP dan nonaktifkan NLA agar koneksi tidak ditolak
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fPromptForPassword" -Value 0
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name "fSingleSessionPerUser" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-      - name: Set Password Akun Runner
+          # 2. Cegah error "hardware adapter removed" & penutupan paksa sesi saat RDP disconnect
+          $tsPolicies = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
+          if (-not (Test-Path $tsPolicies)) {
+              New-Item -Path $tsPolicies -Force | Out-Null
+          }
+          Set-ItemProperty -Path $tsPolicies -Name "MaxDisconnectionTime" -Value 0
+          Set-ItemProperty -Path $tsPolicies -Name "MaxIdleTime" -Value 0
+          Set-ItemProperty -Path $tsPolicies -Name "fResetBroken" -Value 0
+
+      - name: Set Password Akun Runner & Buat Script Disconnect
         shell: powershell
         run: |
+          # Set password akun bawaan runneradmin
           $pass = ConvertTo-SecureString "${{ secrets.RDP_PASSWORD }}" -AsPlainText -Force
           Set-LocalUser -Name "runneradmin" -Password $pass
+
+          # Siapkan skrip disconnect aman di Desktop agar display adapter tidak crash
+          $desktopPath = "C:\Users\runneradmin\Desktop"
+          if (-not (Test-Path $desktopPath)) {
+              New-Item -ItemType Directory -Path $desktopPath -Force | Out-Null
+          }
+          
+          $batchContent = @"
+          @echo off
+          for /f "skip=1 tokens=3" %%s in ('query user %USERNAME%') do (
+              %windir%\System32\tscon.exe %%s /dest:console
+          )
+          "@
+          Set-Content -Path "$desktopPath\Safe-Disconnect.bat" -Value $batchContent
 
       - name: Unduh, Pasang, dan Hubungkan Tailscale
         shell: powershell
@@ -63,6 +89,7 @@ jobs:
               throw "Gagal mendapatkan IP Tailscale runner (Status masih NeedsLogin)."
           }
 
+          Write-Host ""
           Write-Host "=================================================" -ForegroundColor Green
           Write-Host "TAILSCALE IP    : $tsIp" -ForegroundColor Yellow
           Write-Host "HOSTNAME        : github-rdp" -ForegroundColor Yellow
