@@ -14,41 +14,65 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Konfigurasi Service RDP & Registry Anti-Disconnect
+      - name: Konfigurasi Service RDP, Anti-Disconnect & Akselerasi Grafis
         shell: powershell
         run: |
-          # 1. Buka akses RDP dan nonaktifkan NLA agar login stabil
+          # 1. Buka firewall dan set otentikasi RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fPromptForPassword" -Value 0
-          
-          # 2. Paksa 1 sesi per user agar reconnect selalu kembali ke desktop sesi game yang sama
           Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name "fSingleSessionPerUser" -Value 1
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-          # 3. Cegah error "hardware adapter removed" & pemutusan sesi saat RDP terputus
+          # 2. Aktifkan WDDM & Adapter Hardware Virtual untuk RDP Direct3D
           $tsPolicies = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
-          if (-not (Test-Path $tsPolicies)) {
-              New-Item -Path $tsPolicies -Force | Out-Null
-          }
+          if (-not (Test-Path $tsPolicies)) { New-Item -Path $tsPolicies -Force | Out-Null }
+          Set-ItemProperty -Path $tsPolicies -Name "bEnumerateHardwareAdapters" -Value 1
+          Set-ItemProperty -Path $tsPolicies -Name "fEnableWDDMDriver" -Value 1
+          Set-ItemProperty -Path $tsPolicies -Name "EnableGPUOverride" -Value 1
+
+          # 3. Kebijakan timeout sesi agar display adapter tidak dilepas
           Set-ItemProperty -Path $tsPolicies -Name "MaxDisconnectionTime" -Value 0
           Set-ItemProperty -Path $tsPolicies -Name "MaxIdleTime" -Value 0
           Set-ItemProperty -Path $tsPolicies -Name "fResetBroken" -Value 0
 
-      - name: Set Password Akun Runner & Buat Script Disconnect
+      - name: Pasang DirectX 9 Runtime & Aktifkan DirectPlay
         shell: powershell
         run: |
-          # Set password akun bawaan runneradmin
+          Write-Host "Mengaktifkan DirectPlay..."
+          dism /online /enable-feature /featurename:DirectPlay /all /norestart
+
+          Write-Host "Menginstal DirectX End-User Runtimes (June 2010)..."
+          choco install directx -y --no-progress
+
+      - name: Injeksi Default Registry Resolusi Ragnarok
+        shell: powershell
+        run: |
+          # Mencegah error 'Cannot init d3d' akibat registry resolusi kosong (0x0)
+          $regPaths = @(
+              "HKCU:\Software\Gravity Soft\Ragnarok",
+              "HKLM:\SOFTWARE\WOW6432Node\Gravity Soft\Ragnarok"
+          )
+          foreach ($path in $regPaths) {
+              if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+              Set-ItemProperty -Path $path -Name "WIDTH" -Value 1024
+              Set-ItemProperty -Path $path -Name "HEIGHT" -Value 768
+              Set-ItemProperty -Path $path -Name "BITPERPEL" -Value 32
+              Set-ItemProperty -Path $path -Name "WINDOWMODE" -Value 1
+              Set-ItemProperty -Path $path -Name "DEVICECNT" -Value 1
+          }
+
+      - name: Set Password Akun Runner & Siapkan Safe-Disconnect
+        shell: powershell
+        run: |
           $pass = ConvertTo-SecureString "${{ secrets.RDP_PASSWORD }}" -AsPlainText -Force
           Set-LocalUser -Name "runneradmin" -Password $pass
 
-          # Siapkan skrip disconnect aman di Desktop agar adapter grafis tidak crash
           $desktopPath = "C:\Users\runneradmin\Desktop"
-          if (-not (Test-Path $desktopPath)) {
-              New-Item -ItemType Directory -Path $desktopPath -Force | Out-Null
-          }
+          if (-not (Test-Path $desktopPath)) { New-Item -ItemType Directory -Path $desktopPath -Force | Out-Null }
           
+          # Script agar display adapter tidak crash saat koneksi RDP laptop ditutup
           $batchContent = @"
           @echo off
           for /f "skip=1 tokens=3" %%s in ('query user %USERNAME%') do (
@@ -64,21 +88,16 @@ jobs:
           $targetDir = "$desktop\dgVoodoo2"
           New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
 
-          Write-Host "Mengambil rilis dgVoodoo2 terbaru..."
+          Write-Host "Mengunduh rilis dgVoodoo2 terbaru..."
           $release = Invoke-RestMethod -Uri "https://api.github.com/repos/dege-diosg/dgVoodoo2/releases/latest"
           $zipUrl = ($release.assets | Where-Object { $_.name -match '^dgVoodoo2_.*\.zip$' } | Select-Object -First 1).browser_download_url
 
-          Write-Host "Mengunduh dari $zipUrl..."
           Invoke-WebRequest -Uri $zipUrl -OutFile "$desktop\dgVoodoo.zip"
           Expand-Archive -Path "$desktop\dgVoodoo.zip" -DestinationPath "$desktop\temp_extract" -Force
 
-          # Salin DLL DirectX/DirectDraw 32-bit (x86) dan executable config ke folder dgVoodoo2
           Copy-Item "$desktop\temp_extract\MS\x86\*" -Destination $targetDir -Recurse -Force
           Copy-Item "$desktop\temp_extract\dgVoodooCpl.exe" -Destination $targetDir -Force
-
-          # Hapus file arsip sementara
           Remove-Item "$desktop\dgVoodoo.zip", "$desktop\temp_extract" -Recurse -Force
-          Write-Host "dgVoodoo2 siap digunakan di Desktop\dgVoodoo2"
 
       - name: Unduh, Pasang, dan Hubungkan Tailscale
         shell: powershell
@@ -90,16 +109,12 @@ jobs:
           Start-Process -FilePath ".\tailscale-setup.exe" -ArgumentList "/quiet" -Wait
 
           $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
-
-          # Pastikan background service Tailscale aktif
           Start-Service Tailscale -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 3
 
-          Write-Host "Menghubungkan runner ke jaringan Tailscale..."
-          # Wajib gunakan --unattended dan --reset untuk runner headless Windows
+          Write-Host "Menghubungkan runner ke Tailnet..."
           & $tailscalePath up --authkey="$env:TAILSCALE_AUTHKEY" --hostname="github-rdp" --accept-routes --unattended --reset
 
-          # Polling IP Tailscale hingga siap (maksimal 30 detik)
           $tsIp = $null
           $timeout = 30
           while (-not $tsIp -and $timeout -gt 0) {
@@ -109,9 +124,8 @@ jobs:
           }
 
           if (-not $tsIp) {
-              Write-Host "Status rincian Tailscale:" -ForegroundColor Red
               & $tailscalePath status
-              throw "Gagal mendapatkan IP Tailscale runner (Status masih NeedsLogin)."
+              throw "Gagal mendapatkan IP Tailscale runner."
           }
 
           Write-Host ""
@@ -121,15 +135,14 @@ jobs:
           Write-Host "USERNAME        : runneradmin" -ForegroundColor Yellow
           Write-Host "PASSWORD        : [Sesuai secret RDP_PASSWORD]" -ForegroundColor Yellow
           Write-Host "=================================================" -ForegroundColor Green
-          Write-Host ""
-          Write-Host "Koneksi via laptop: mstsc /v:$tsIp" -ForegroundColor Cyan
+          Write-Host "Koneksi via laptop/HP: mstsc /v:$tsIp" -ForegroundColor Cyan
 
       - name: Menjaga Sesi Tetap Aktif (Keep-Alive)
         shell: powershell
         run: |
           $hours = [math]::Min([int]"${{ github.event.inputs.duration_hours }}", 6)
           $totalSeconds = $hours * 3600
-          Write-Host "Sesi RDP berjalan selama $hours jam ($totalSeconds detik)..."
+          Write-Host "Sesi RDP aktif selama $hours jam ($totalSeconds detik)..."
           
           $elapsed = 0
           while ($elapsed -lt $totalSeconds) {
