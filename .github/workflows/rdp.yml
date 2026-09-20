@@ -1,0 +1,87 @@
+name: Windows RDP Session
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_hours:
+        description: 'Durasi sesi dalam jam (maksimal 6)'
+        required: false
+        default: '6'
+
+jobs:
+  build-and-remote:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Konfigurasi Service RDP Windows
+        shell: powershell
+        run: |
+          # Buka port firewall dan matikan NLA agar login tidak dibajak domain lokal laptop
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+      - name: Set Password Akun Runner
+        shell: powershell
+        run: |
+          $pass = ConvertTo-SecureString "${{ secrets.RDP_PASSWORD }}" -AsPlainText -Force
+          Set-LocalUser -Name "runneradmin" -Password $pass
+
+      - name: Unduh, Pasang, dan Hubungkan Tailscale
+        shell: powershell
+        env:
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        run: |
+          Write-Host "Mengunduh Tailscale..."
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "tailscale-setup.exe"
+          Start-Process -FilePath ".\tailscale-setup.exe" -ArgumentList "/quiet" -Wait
+
+          $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
+
+          # Pastikan background service Tailscale aktif
+          Start-Service Tailscale -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 3
+
+          Write-Host "Menghubungkan runner ke jaringan Tailscale..."
+          # Wajib gunakan --unattended dan --reset untuk runner headless Windows
+          & $tailscalePath up --authkey="$env:TAILSCALE_AUTHKEY" --hostname="github-rdp" --accept-routes --unattended --reset
+
+          # Polling IP Tailscale hingga siap (maksimal 30 detik)
+          $tsIp = $null
+          $timeout = 30
+          while (-not $tsIp -and $timeout -gt 0) {
+              Start-Sleep -Seconds 2
+              $timeout -= 2
+              $tsIp = (& $tailscalePath ip -4 2>$null) | Select-Object -First 1
+          }
+
+          if (-not $tsIp) {
+              Write-Host "Status rincian Tailscale:" -ForegroundColor Red
+              & $tailscalePath status
+              throw "Gagal mendapatkan IP Tailscale runner (Status masih NeedsLogin)."
+          }
+
+          Write-Host "=================================================" -ForegroundColor Green
+          Write-Host "TAILSCALE IP    : $tsIp" -ForegroundColor Yellow
+          Write-Host "HOSTNAME        : github-rdp" -ForegroundColor Yellow
+          Write-Host "USERNAME        : runneradmin" -ForegroundColor Yellow
+          Write-Host "PASSWORD        : [Sesuai secret RDP_PASSWORD]" -ForegroundColor Yellow
+          Write-Host "=================================================" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "Koneksi via laptop: mstsc /v:$tsIp" -ForegroundColor Cyan
+
+      - name: Menjaga Sesi Tetap Aktif (Keep-Alive)
+        shell: powershell
+        run: |
+          $hours = [math]::Min([int]"${{ github.event.inputs.duration_hours }}", 6)
+          $totalSeconds = $hours * 3600
+          Write-Host "Sesi RDP berjalan selama $hours jam ($totalSeconds detik)..."
+          
+          $elapsed = 0
+          while ($elapsed -lt $totalSeconds) {
+              Start-Sleep -Seconds 60
+              $elapsed += 60
+              Write-Host "Runner aktif: $($elapsed / 60) menit dari $($totalSeconds / 60) menit."
+          }
