@@ -17,15 +17,17 @@ jobs:
       - name: Konfigurasi Service RDP & Registry Anti-Disconnect
         shell: powershell
         run: |
-          # 1. Buka akses RDP dan nonaktifkan NLA agar koneksi tidak ditolak
+          # 1. Buka akses RDP dan nonaktifkan NLA agar login stabil
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fPromptForPassword" -Value 0
-          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name "fSingleSessionPerUser" -Value 0
+          
+          # 2. Paksa 1 sesi per user agar reconnect selalu kembali ke desktop sesi game yang sama
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name "fSingleSessionPerUser" -Value 1
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-          # 2. Cegah error "hardware adapter removed" & penutupan paksa sesi saat RDP disconnect
+          # 3. Cegah error "hardware adapter removed" & pemutusan sesi saat RDP terputus
           $tsPolicies = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
           if (-not (Test-Path $tsPolicies)) {
               New-Item -Path $tsPolicies -Force | Out-Null
@@ -41,7 +43,7 @@ jobs:
           $pass = ConvertTo-SecureString "${{ secrets.RDP_PASSWORD }}" -AsPlainText -Force
           Set-LocalUser -Name "runneradmin" -Password $pass
 
-          # Siapkan skrip disconnect aman di Desktop agar display adapter tidak crash
+          # Siapkan skrip disconnect aman di Desktop agar adapter grafis tidak crash
           $desktopPath = "C:\Users\runneradmin\Desktop"
           if (-not (Test-Path $desktopPath)) {
               New-Item -ItemType Directory -Path $desktopPath -Force | Out-Null
@@ -54,6 +56,29 @@ jobs:
           )
           "@
           Set-Content -Path "$desktopPath\Safe-Disconnect.bat" -Value $batchContent
+
+      - name: Unduh dan Ekstrak dgVoodoo2 ke Desktop
+        shell: powershell
+        run: |
+          $desktop = "C:\Users\runneradmin\Desktop"
+          $targetDir = "$desktop\dgVoodoo2"
+          New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+
+          Write-Host "Mengambil rilis dgVoodoo2 terbaru..."
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/dege-diosg/dgVoodoo2/releases/latest"
+          $zipUrl = ($release.assets | Where-Object { $_.name -match '^dgVoodoo2_.*\.zip$' } | Select-Object -First 1).browser_download_url
+
+          Write-Host "Mengunduh dari $zipUrl..."
+          Invoke-WebRequest -Uri $zipUrl -OutFile "$desktop\dgVoodoo.zip"
+          Expand-Archive -Path "$desktop\dgVoodoo.zip" -DestinationPath "$desktop\temp_extract" -Force
+
+          # Salin DLL DirectX/DirectDraw 32-bit (x86) dan executable config ke folder dgVoodoo2
+          Copy-Item "$desktop\temp_extract\MS\x86\*" -Destination $targetDir -Recurse -Force
+          Copy-Item "$desktop\temp_extract\dgVoodooCpl.exe" -Destination $targetDir -Force
+
+          # Hapus file arsip sementara
+          Remove-Item "$desktop\dgVoodoo.zip", "$desktop\temp_extract" -Recurse -Force
+          Write-Host "dgVoodoo2 siap digunakan di Desktop\dgVoodoo2"
 
       - name: Unduh, Pasang, dan Hubungkan Tailscale
         shell: powershell
