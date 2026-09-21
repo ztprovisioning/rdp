@@ -49,7 +49,7 @@ jobs:
       - name: Injeksi Default Registry Resolusi Ragnarok
         shell: powershell
         run: |
-          # Mencegah error 'Cannot init d3d' akibat registry resolusi kosong (0x0)[cite: 3]
+          # Mencegah error 'Cannot init d3d' akibat registry resolusi kosong (0x0)
           $regPaths = @(
               "HKCU:\Software\Gravity Soft\Ragnarok",
               "HKLM:\SOFTWARE\WOW6432Node\Gravity Soft\Ragnarok"
@@ -113,7 +113,6 @@ jobs:
           Write-Host "2. Menginstal ke $installDir..."
           if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Path$installDir -Force | Out-Null }
           
-          # Eksekusi installer mode silent (Inno Setup / NSIS)
           Start-Process -FilePath $setupExe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`"" -Wait
 
           Write-Host "3. Injeksi file wrapper dgVoodoo2 ke folder game..."
@@ -122,7 +121,7 @@ jobs:
               Copy-Item "$dgVoodooDir\*" -Destination $installDir -Recurse -Force
           }
 
-          Write-Host "4. Siapkan launcher di Desktop & Launch via PowerShell..."
+          Write-Host "4. Siapkan shortcut launcher di Desktop & Launch via PowerShell..."
           $launcherBat = @"
           @echo off
           cd /d "$installDir"
@@ -130,13 +129,12 @@ jobs:
           "@
           Set-Content -Path "$desktopPath\Play-RagnarokZero.bat" -Value $launcherBat
 
-          # Jalankan executable game
           $rozExe = "$installDir\ROZ Global.exe"
           if (Test-Path $rozExe) {
               Write-Host "Meluncurkan $rozExe..."
               Start-Process -FilePath $rozExe -WorkingDirectory$installDir
           } else {
-              Write-Host "Executable $rozExe belum ditemukan. Periksa apakah proses ekstraksi installer berbeda." -ForegroundColor Yellow
+              Write-Host "Executable $rozExe belum ditemukan di direktori instalasi." -ForegroundColor Yellow
           }
 
       - name: Unduh, Pasang, dan Hubungkan Tailscale
@@ -161,7 +159,8 @@ jobs:
               $timeout -= 2$tsIp = (& $tailscalePath ip -4 2>$null) | Select-Object -First 1
           }
 
-          if (-not $tsIp) {               &$tailscalePath status
+          if (-not $tsIp) {
+              & $tailscalePath status
               throw "Gagal mendapatkan IP Tailscale runner."
           }
 
