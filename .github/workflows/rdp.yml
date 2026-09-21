@@ -27,7 +27,7 @@ jobs:
 
           # 2. Aktifkan WDDM & Adapter Hardware Virtual untuk RDP Direct3D
           $tsPolicies = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
-          if (-not (Test-Path $tsPolicies)) { New-Item -Path$tsPolicies -Force | Out-Null }
+          if (-not (Test-Path $tsPolicies)) { New-Item -Path$tsPolicies -ItemType Directory -Force | Out-Null }
           Set-ItemProperty -Path $tsPolicies -Name "bEnumerateHardwareAdapters" -Value 1
           Set-ItemProperty -Path $tsPolicies -Name "fEnableWDDMDriver" -Value 1
           Set-ItemProperty -Path $tsPolicies -Name "EnableGPUOverride" -Value 1
@@ -53,7 +53,7 @@ jobs:
           Set-LocalUser -Name "runneradmin" -Password $pass
 
           $desktopPath = "C:\Users\runneradmin\Desktop"
-          if (-not (Test-Path $desktopPath)) { New-Item -ItemType Directory -Path$desktopPath -Force | Out-Null }
+          if (-not (Test-Path $desktopPath)) { New-Item -Path$desktopPath -ItemType Directory -Force | Out-Null }
           
           # Script agar display adapter tidak crash saat koneksi RDP ditutup
           $batchContent = @"
@@ -72,14 +72,16 @@ jobs:
           $setupExe = "$desktopPath\RAG_SETUP_20260702.exe"
           $setupUrl = "https://patch-roz.mygnjoy.com/live/Downloader/RAG_SETUP_20260702.exe"
 
-          Write-Host "1. Mengunduh installer Ragnarok Zero ke Desktop..."
-          Invoke-WebRequest -Uri $setupUrl -OutFile$setupExe
+          Write-Host "1. Mengunduh installer Ragnarok Zero via curl..."
+          curl.exe -L "$setupUrl" -o "$setupExe"
 
           Write-Host "2. Menginstal ke $installDir..."
-          if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Path$installDir -Force | Out-Null }
+          if (-not (Test-Path -Path $installDir)) {
+              New-Item -Path $installDir -ItemType Directory -Force | Out-Null
+          }
           Start-Process -FilePath $setupExe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`"" -Wait
 
-          Write-Host "3. Siapkan shortcut launcher di Desktop & Launch via PowerShell..."
+          Write-Host "3. Siapkan shortcut launcher di Desktop..."
           $launcherBat = @"
           @echo off
           cd /d "$installDir"
@@ -88,11 +90,11 @@ jobs:
           Set-Content -Path "$desktopPath\Play-RagnarokZero.bat" -Value $launcherBat
 
           $rozExe = "$installDir\ROZ Global.exe"
-          if (Test-Path $rozExe) {
+          if (Test-Path -Path $rozExe) {
               Write-Host "Meluncurkan $rozExe..."
               Start-Process -FilePath $rozExe -WorkingDirectory$installDir
           } else {
-              Write-Host "Executable $rozExe belum ditemukan di direktori instalasi." -ForegroundColor Yellow
+              Write-Host "Executable ROZ Global.exe belum ditemukan di direktori instalasi." -ForegroundColor Yellow
           }
 
       - name: Unduh, Pasang, dan Hubungkan Tailscale
@@ -100,8 +102,8 @@ jobs:
         env:
           TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
-          Write-Host "Mengunduh Tailscale..."
-          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "tailscale-setup.exe"
+          Write-Host "Mengunduh Tailscale via curl..."
+          curl.exe -L "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -o "tailscale-setup.exe"
           Start-Process -FilePath ".\tailscale-setup.exe" -ArgumentList "/quiet" -Wait
 
           $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
