@@ -17,7 +17,7 @@ jobs:
       - name: Konfigurasi Service RDP, Anti-Disconnect & Akselerasi Grafis
         shell: powershell
         run: |
-          # 1. Buka firewall dan set otentikasi RDP
+          # 1. Buka firewall dan konfigurasi autentikasi RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0
@@ -49,19 +49,23 @@ jobs:
       - name: Injeksi Default Registry Resolusi Ragnarok
         shell: powershell
         run: |
-          # Mencegah error 'Cannot init d3d' akibat registry resolusi kosong (0x0)
-          $regPaths = @(
-              "HKCU:\Software\Gravity Soft\Ragnarok",
-              "HKLM:\SOFTWARE\WOW6432Node\Gravity Soft\Ragnarok"
-          )
-          foreach ($path in$regPaths) {
-              if (-not (Test-Path $path)) { New-Item -Path$path -Force | Out-Null }
-              Set-ItemProperty -Path $path -Name "WIDTH" -Value 1024
-              Set-ItemProperty -Path $path -Name "HEIGHT" -Value 768
-              Set-ItemProperty -Path $path -Name "BITPERPEL" -Value 32
-              Set-ItemProperty -Path $path -Name "WINDOWMODE" -Value 1
-              Set-ItemProperty -Path $path -Name "DEVICECNT" -Value 1
-          }
+          # 1. Kunci resolusi pada user profile (HKCU)
+          $hkcu = "HKCU:\Software\Gravity Soft\Ragnarok"
+          if (-not (Test-Path $hkcu)) { New-Item -Path$hkcu -Force | Out-Null }
+          Set-ItemProperty -Path $hkcu -Name "WIDTH" -Value 1024
+          Set-ItemProperty -Path $hkcu -Name "HEIGHT" -Value 768
+          Set-ItemProperty -Path $hkcu -Name "BITPERPEL" -Value 32
+          Set-ItemProperty -Path $hkcu -Name "WINDOWMODE" -Value 1
+          Set-ItemProperty -Path $hkcu -Name "DEVICECNT" -Value 1
+
+          # 2. Kunci resolusi pada machine level 32-bit (HKLM)
+          $hklm = "HKLM:\SOFTWARE\WOW6432Node\Gravity Soft\Ragnarok"
+          if (-not (Test-Path $hklm)) { New-Item -Path$hklm -Force | Out-Null }
+          Set-ItemProperty -Path $hklm -Name "WIDTH" -Value 1024
+          Set-ItemProperty -Path $hklm -Name "HEIGHT" -Value 768
+          Set-ItemProperty -Path $hklm -Name "BITPERPEL" -Value 32
+          Set-ItemProperty -Path $hklm -Name "WINDOWMODE" -Value 1
+          Set-ItemProperty -Path $hklm -Name "DEVICECNT" -Value 1
 
       - name: Set Password Akun Runner & Siapkan Safe-Disconnect
         shell: powershell
@@ -72,7 +76,7 @@ jobs:
           $desktopPath = "C:\Users\runneradmin\Desktop"
           if (-not (Test-Path $desktopPath)) { New-Item -ItemType Directory -Path$desktopPath -Force | Out-Null }
           
-          # Script agar display adapter tidak crash saat koneksi RDP ditutup
+          # Skrip konsol agar driver grafis tidak crash saat jendela RDP ditutup
           $batchContent = @"
           @echo off
           for /f "skip=1 tokens=3" %%s in ('query user %USERNAME%') do (
@@ -112,7 +116,6 @@ jobs:
 
           Write-Host "2. Menginstal ke $installDir..."
           if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Path$installDir -Force | Out-Null }
-          
           Start-Process -FilePath $setupExe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`"" -Wait
 
           Write-Host "3. Injeksi file wrapper dgVoodoo2 ke folder game..."
@@ -159,8 +162,7 @@ jobs:
               $timeout -= 2$tsIp = (& $tailscalePath ip -4 2>$null) | Select-Object -First 1
           }
 
-          if (-not $tsIp) {
-              & $tailscalePath status
+          if (-not $tsIp) {               &$tailscalePath status
               throw "Gagal mendapatkan IP Tailscale runner."
           }
 
