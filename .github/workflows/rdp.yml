@@ -117,7 +117,8 @@ jobs:
               $timeout -= 2$tsIp = (& $tailscalePath ip -4 2>$null) | Select-Object -First 1
           }
 
-          if (-not $tsIp) {               &$tailscalePath status
+          if (-not $tsIp) {
+              & $tailscalePath status
               throw "Gagal mendapatkan IP Tailscale runner."
           }
 
