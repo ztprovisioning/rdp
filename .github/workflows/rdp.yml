@@ -17,7 +17,7 @@ jobs:
       - name: Konfigurasi Service RDP, Anti-Disconnect & Akselerasi Grafis
         shell: powershell
         run: |
-          # 1. Buka firewall dan konfigurasi autentikasi RDP
+          # 1. Buka firewall dan set otentikasi RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0
@@ -46,27 +46,6 @@ jobs:
           Write-Host "Menginstal DirectX End-User Runtimes (June 2010)..."
           choco install directx -y --no-progress
 
-      - name: Injeksi Default Registry Resolusi Ragnarok
-        shell: powershell
-        run: |
-          # 1. Kunci resolusi pada user profile (HKCU)
-          $hkcu = "HKCU:\Software\Gravity Soft\Ragnarok"
-          if (-not (Test-Path $hkcu)) { New-Item -Path$hkcu -Force | Out-Null }
-          Set-ItemProperty -Path $hkcu -Name "WIDTH" -Value 1024
-          Set-ItemProperty -Path $hkcu -Name "HEIGHT" -Value 768
-          Set-ItemProperty -Path $hkcu -Name "BITPERPEL" -Value 32
-          Set-ItemProperty -Path $hkcu -Name "WINDOWMODE" -Value 1
-          Set-ItemProperty -Path $hkcu -Name "DEVICECNT" -Value 1
-
-          # 2. Kunci resolusi pada machine level 32-bit (HKLM)
-          $hklm = "HKLM:\SOFTWARE\WOW6432Node\Gravity Soft\Ragnarok"
-          if (-not (Test-Path $hklm)) { New-Item -Path$hklm -Force | Out-Null }
-          Set-ItemProperty -Path $hklm -Name "WIDTH" -Value 1024
-          Set-ItemProperty -Path $hklm -Name "HEIGHT" -Value 768
-          Set-ItemProperty -Path $hklm -Name "BITPERPEL" -Value 32
-          Set-ItemProperty -Path $hklm -Name "WINDOWMODE" -Value 1
-          Set-ItemProperty -Path $hklm -Name "DEVICECNT" -Value 1
-
       - name: Set Password Akun Runner & Siapkan Safe-Disconnect
         shell: powershell
         run: |
@@ -76,7 +55,7 @@ jobs:
           $desktopPath = "C:\Users\runneradmin\Desktop"
           if (-not (Test-Path $desktopPath)) { New-Item -ItemType Directory -Path$desktopPath -Force | Out-Null }
           
-          # Skrip konsol agar driver grafis tidak crash saat jendela RDP ditutup
+          # Script agar display adapter tidak crash saat koneksi RDP ditutup
           $batchContent = @"
           @echo off
           for /f "skip=1 tokens=3" %%s in ('query user %USERNAME%') do (
@@ -84,24 +63,6 @@ jobs:
           )
           "@
           Set-Content -Path "$desktopPath\Safe-Disconnect.bat" -Value $batchContent
-
-      - name: Unduh dan Ekstrak dgVoodoo2 ke Desktop
-        shell: powershell
-        run: |
-          $desktop = "C:\Users\runneradmin\Desktop"
-          $targetDir = "$desktop\dgVoodoo2"
-          New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-
-          Write-Host "Mengunduh rilis dgVoodoo2 terbaru..."
-          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/dege-diosg/dgVoodoo2/releases/latest"
-          $zipUrl = ($release.assets | Where-Object { $_.name -match '^dgVoodoo2_.*\.zip$' } | Select-Object -First 1).browser_download_url
-
-          Invoke-WebRequest -Uri $zipUrl -OutFile "$desktop\dgVoodoo.zip"
-          Expand-Archive -Path "$desktop\dgVoodoo.zip" -DestinationPath "$desktop\temp_extract" -Force
-
-          Copy-Item "$desktop\temp_extract\MS\x86\*" -Destination $targetDir -Recurse -Force
-          Copy-Item "$desktop\temp_extract\dgVoodooCpl.exe" -Destination $targetDir -Force
-          Remove-Item "$desktop\dgVoodoo.zip", "$desktop\temp_extract" -Recurse -Force
 
       - name: Unduh, Pasang Ragnarok Zero & Launch Game
         shell: powershell
@@ -118,13 +79,7 @@ jobs:
           if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Path$installDir -Force | Out-Null }
           Start-Process -FilePath $setupExe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`"" -Wait
 
-          Write-Host "3. Injeksi file wrapper dgVoodoo2 ke folder game..."
-          $dgVoodooDir = "$desktopPath\dgVoodoo2"
-          if (Test-Path $dgVoodooDir) {
-              Copy-Item "$dgVoodooDir\*" -Destination $installDir -Recurse -Force
-          }
-
-          Write-Host "4. Siapkan shortcut launcher di Desktop & Launch via PowerShell..."
+          Write-Host "3. Siapkan shortcut launcher di Desktop & Launch via PowerShell..."
           $launcherBat = @"
           @echo off
           cd /d "$installDir"
