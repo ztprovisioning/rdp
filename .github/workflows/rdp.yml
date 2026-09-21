@@ -17,7 +17,7 @@ jobs:
       - name: Konfigurasi Service RDP, Anti-Disconnect & Akselerasi Grafis
         shell: powershell
         run: |
-          # 1. Buka firewall dan set otentikasi RDP
+          # 1. Buka firewall dan konfigurasi autentikasi RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0
@@ -27,7 +27,9 @@ jobs:
 
           # 2. Aktifkan WDDM & Adapter Hardware Virtual untuk RDP Direct3D
           $tsPolicies = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services'
-          if (-not (Test-Path $tsPolicies)) { New-Item -Path$tsPolicies -ItemType Directory -Force | Out-Null }
+          if (-not (Test-Path -Path $tsPolicies)) {
+              New-Item -Path $tsPolicies -ItemType Directory -Force | Out-Null
+          }
           Set-ItemProperty -Path $tsPolicies -Name "bEnumerateHardwareAdapters" -Value 1
           Set-ItemProperty -Path $tsPolicies -Name "fEnableWDDMDriver" -Value 1
           Set-ItemProperty -Path $tsPolicies -Name "EnableGPUOverride" -Value 1
@@ -53,9 +55,11 @@ jobs:
           Set-LocalUser -Name "runneradmin" -Password $pass
 
           $desktopPath = "C:\Users\runneradmin\Desktop"
-          if (-not (Test-Path $desktopPath)) { New-Item -Path$desktopPath -ItemType Directory -Force | Out-Null }
+          if (-not (Test-Path -Path $desktopPath)) {
+              New-Item -Path $desktopPath -ItemType Directory -Force | Out-Null
+          }
           
-          # Script agar display adapter tidak crash saat koneksi RDP ditutup
+          # Script agar display adapter tidak crash saat jendela RDP ditutup
           $batchContent = @"
           @echo off
           for /f "skip=1 tokens=3" %%s in ('query user %USERNAME%') do (
@@ -64,38 +68,19 @@ jobs:
           "@
           Set-Content -Path "$desktopPath\Safe-Disconnect.bat" -Value $batchContent
 
-      - name: Unduh, Pasang Ragnarok Zero & Launch Game
+      - name: Unduh Installer Ragnarok Zero ke Desktop
         shell: powershell
         run: |
-          $installDir = "C:\Gravity\RagnarokZero"
           $desktopPath = "C:\Users\runneradmin\Desktop"
+          if (-not (Test-Path -Path $desktopPath)) {
+              New-Item -Path $desktopPath -ItemType Directory -Force | Out-Null
+          }
           $setupExe = "$desktopPath\RAG_SETUP_20260702.exe"
           $setupUrl = "https://patch-roz.mygnjoy.com/live/Downloader/RAG_SETUP_20260702.exe"
 
-          Write-Host "1. Mengunduh installer Ragnarok Zero via curl..."
+          Write-Host "Mengunduh installer Ragnarok Zero via curl..."
           curl.exe -L "$setupUrl" -o "$setupExe"
-
-          Write-Host "2. Menginstal ke $installDir..."
-          if (-not (Test-Path -Path $installDir)) {
-              New-Item -Path $installDir -ItemType Directory -Force | Out-Null
-          }
-          Start-Process -FilePath $setupExe -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$installDir`"" -Wait
-
-          Write-Host "3. Siapkan shortcut launcher di Desktop..."
-          $launcherBat = @"
-          @echo off
-          cd /d "$installDir"
-          start "" "ROZ Global.exe"
-          "@
-          Set-Content -Path "$desktopPath\Play-RagnarokZero.bat" -Value $launcherBat
-
-          $rozExe = "$installDir\ROZ Global.exe"
-          if (Test-Path -Path $rozExe) {
-              Write-Host "Meluncurkan $rozExe..."
-              Start-Process -FilePath $rozExe -WorkingDirectory$installDir
-          } else {
-              Write-Host "Executable ROZ Global.exe belum ditemukan di direktori instalasi." -ForegroundColor Yellow
-          }
+          Write-Host "Selesai mengunduh. File tersedia di Desktop."
 
       - name: Unduh, Pasang, dan Hubungkan Tailscale
         shell: powershell
@@ -113,10 +98,12 @@ jobs:
           Write-Host "Menghubungkan runner ke Tailnet..."
           & $tailscalePath up --authkey="$env:TAILSCALE_AUTHKEY" --hostname="github-rdp" --accept-routes --unattended --reset
 
-          $tsIp = $null$timeout = 30
-          while (-not $tsIp -and$timeout -gt 0) {
+          $tsIp = $null
+          $timeout = 30
+          while (-not $tsIp -and $timeout -gt 0) {
               Start-Sleep -Seconds 2
-              $timeout -= 2$tsIp = (& $tailscalePath ip -4 2>$null) | Select-Object -First 1
+              $timeout -= 2
+              $tsIp = (& $tailscalePath ip -4 2>$null) | Select-Object -First 1
           }
 
           if (-not $tsIp) {
@@ -138,11 +125,11 @@ jobs:
         shell: powershell
         run: |
           $hours = [math]::Min([int]"${{ github.event.inputs.duration_hours }}", 6)
-          $totalSeconds =$hours * 3600
+          $totalSeconds = $hours * 3600
           Write-Host "Sesi RDP aktif selama $hours jam ($totalSeconds detik)..."
           
           $elapsed = 0
-          while ($elapsed -lt$totalSeconds) {
+          while ($elapsed -lt $totalSeconds) {
               Start-Sleep -Seconds 60
               $elapsed += 60
               Write-Host "Runner aktif: $($elapsed / 60) menit dari $($totalSeconds / 60) menit."
